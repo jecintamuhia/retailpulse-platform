@@ -1,0 +1,49 @@
+# ==========================================
+# RetailPulse System Environment Git Ignore Array
+# ==========================================
+
+# 1. Local Python Virtual Environments
+.venv/
+venv/
+ENV/
+env/
+bin/
+lib/
+include/
+
+# 2. Local Raw & Clean Data Storage Directories (Never commit large CSVs/Parquet files)
+data/
+*.csv
+*.parquet
+*.xlsx
+*.json
+
+# 3. Python Bytecode, Caches, and Internal Compilations
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+# 4. Streamlit and UI Local Configurations
+.streamlit/config.toml
+.streamlit/secrets.toml
+
+# 5. MLflow Tracking Logs & Model Registry Artifact Arrays
+mlruns/
+mlflow_outputs/
+lightning_logs/
+*.pt
+*.pkl
+*.joblib
+
+# 6. Operating System Specific Spurious Files
+*.DS_Store
+Thumbs.db
+ehthumbs.db
+
+# 7. Environment Variables and Secret Keys
+.env
+.secrets
