@@ -19,14 +19,14 @@ class RetailStreamHandler:
         os.makedirs(self.data_dir, exist_ok=True)
         
         response = requests.get(self.source_url, stream=True)
-        if response.status_status == 200 or response.ok:
+        if response.status_code == 200 or response.ok:
             with open(self.raw_output_path, "wb") as f:
                 for chunk in response.iter_content(chunk_size=8192):
                     if chunk:
                         f.write(chunk)
-            print(f"[🚀] Download complete. Saved to {self.raw_output_path}")
+            print(f" Download complete. Saved to {self.raw_output_path}")
         else:
-            raise ConnectionError(f"[❌] Failed to fetch data from source. Status code: {response.status_code}")
+            raise ConnectionError(f" Failed to fetch data from source. Status code: {response.status_code}")
             
         return self.raw_output_path
 

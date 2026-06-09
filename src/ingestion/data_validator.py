@@ -19,17 +19,15 @@ class RetailDataValidator:
         initial_count = len(df)
         print(f"[+] Loaded {initial_count:,} raw transactions.")
 
-        # 1. Drop rows missing vital customer identifiers
+        # 1 & 2. Handle missing customer records and serialize type
         df = df.dropna(subset=["CustomerID"])
-
-        # 2. Convert Customer ID to clean string identifier
         df["CustomerID"] = df["CustomerID"].astype(int).astype(str)
         
         # 3. Handle retail cancellations (Invoice numbers starting with 'C')
         df["InvoiceNo"] = df["InvoiceNo"].astype(str).str.strip()
         df = df[~df["InvoiceNo"].str.startswith("C", na=False)]
 
-        # 4. Enforce positive business metrics (remove zero/negative quantities & prices)
+        # 4. Enforce positive business metrics
         df = df[df["Quantity"] > 0]
         df = df[df["UnitPrice"] > 0.0]
 
@@ -53,17 +51,31 @@ class RetailDataValidator:
         """Validates the processed real data against Great Expectations rules."""
         print("[*] Evaluating clean dataset with Great Expectations rules...")
         df = pd.read_csv(self.clean_path)
+        
+        # Convert standard Pandas DataFrame to Great Expectations dataset
         gx_df = gx.from_pandas(df)
 
+        # 1. Validate Customer ID exists
         val_customer = gx_df.expect_column_values_to_not_be_null("CustomerID")["success"]
-        val_quantity = gx_df.expect_column_values_to_be_greater_than("Quantity", 0)["success"]
-        val_price = gx_df.expect_column_values_to_be_greater_than("UnitPrice", 0.0)["success"]
         
+        # 2. Validate Quantity (>= 1) using range bound
+        val_quantity = gx_df.expect_column_values_to_be_between(
+            "Quantity", min_value=1, max_value=None
+        )["success"]
+        
+        # 3. Validate UnitPrice (>= 0.01) using range bound
+        val_price = gx_df.expect_column_values_to_be_between(
+            "UnitPrice", min_value=0.01, max_value=None
+        )["success"]
+
+        # Aggregate logical checks
         all_passed = all([val_customer, val_quantity, val_price])
+        
         if all_passed:
-            print("[🚀] Schema Validation PASSED. Dataset is clean and ready for ML layers.")
+            print("[+] Schema Validation PASSED. Dataset is clean and ready for ML layers.")
         else:
-            print("[❌] Schema Validation FAILED. Unexpected records detected.")
+            print("[-] Schema Validation FAILED. Unexpected records detected.")
+            
         return all_passed
 
 if __name__ == "__main__":
