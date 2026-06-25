@@ -1,7 +1,10 @@
 import os
+import logging
+import zipfile
 import pandas as pd
-import great_expectations as gx
-from src.ingestion.stream_handler import RetailStreamHandler
+
+logging.basicConfig(level=logging.INFO)
+
 
 class RetailDataValidator:
     def __init__(self, raw_path: str, clean_path: str):
@@ -9,85 +12,136 @@ class RetailDataValidator:
         self.clean_path = clean_path
 
     def clean_raw_data(self) -> str:
-        """
-        Cleans the real-world Online Retail dataset.
-        Handles null CustomerIDs, cancels, and strips whitespace from StockCodes.
-        """
-        print("[*] Loading large-scale raw data into memory (this may take a moment)...")
-        # Read the Excel file fetched from UCI
-        df = pd.read_excel(self.raw_path)
-        initial_count = len(df)
-        print(f"[+] Loaded {initial_count:,} raw transactions.")
+        try:
+            logging.info("Loading raw dataset...")
+            logging.info(f"Reading file: {self.raw_path}")
 
-        # 1 & 2. Handle missing customer records and serialize type
-        df = df.dropna(subset=["CustomerID"])
-        df["CustomerID"] = df["CustomerID"].astype(int).astype(str)
-        
-        # 3. Handle retail cancellations (Invoice numbers starting with 'C')
-        df["InvoiceNo"] = df["InvoiceNo"].astype(str).str.strip()
-        df = df[~df["InvoiceNo"].str.startswith("C", na=False)]
+            if not os.path.exists(self.raw_path):
+                raise FileNotFoundError(
+                    f"Dataset not found: {self.raw_path}"
+                )
 
-        # 4. Enforce positive business metrics
-        df = df[df["Quantity"] > 0]
-        df = df[df["UnitPrice"] > 0.0]
+            # Verify XLSX file
+            if not zipfile.is_zipfile(self.raw_path):
+                raise ValueError(
+                    f"Invalid Excel file: {self.raw_path}\n"
+                    "The downloaded file is not a valid XLSX workbook.\n"
+                    "Delete it and download again."
+                )
 
-        # 5. Data formatting and column additions
-        df["StockCode"] = df["StockCode"].astype(str).str.strip()
-        df["InvoiceDate"] = pd.to_datetime(df["InvoiceDate"])
-        df["TotalRevenue"] = df["Quantity"] * df["UnitPrice"]
+            df = pd.read_excel(
+                self.raw_path,
+                engine="openpyxl"
+            )
 
-        # 6. Deduplicate entries
-        df = df.drop_duplicates()
+            logging.info(f"Initial rows: {len(df):,}")
 
-        # Save out to project directory
-        os.makedirs(os.path.dirname(self.clean_path), exist_ok=True)
-        df.to_csv(self.clean_path, index=False)
-        
-        print(f"[+] Cleaning complete. Rows processed from {initial_count:,} down to {len(df):,}.")
-        print(f"[+] Validated clean file saved at: {self.clean_path}")
-        return self.clean_path
+            required_columns = [
+                "InvoiceNo",
+                "StockCode",
+                "Quantity",
+                "InvoiceDate",
+                "UnitPrice",
+                "CustomerID",
+            ]
 
-    def validate_production_schema(self) -> bool:
-        """Validates the processed real data against Great Expectations rules."""
-        print("[*] Evaluating clean dataset with Great Expectations rules...")
-        df = pd.read_csv(self.clean_path)
-        
-        # Convert standard Pandas DataFrame to Great Expectations dataset
-        gx_df = gx.from_pandas(df)
+            missing = [
+                col for col in required_columns
+                if col not in df.columns
+            ]
 
-        # 1. Validate Customer ID exists
-        val_customer = gx_df.expect_column_values_to_not_be_null("CustomerID")["success"]
-        
-        # 2. Validate Quantity (>= 1) using range bound
-        val_quantity = gx_df.expect_column_values_to_be_between(
-            "Quantity", min_value=1, max_value=None
-        )["success"]
-        
-        # 3. Validate UnitPrice (>= 0.01) using range bound
-        val_price = gx_df.expect_column_values_to_be_between(
-            "UnitPrice", min_value=0.01, max_value=None
-        )["success"]
+            if missing:
+                raise ValueError(
+                    f"Missing required columns: {missing}"
+                )
 
-        # Aggregate logical checks
-        all_passed = all([val_customer, val_quantity, val_price])
-        
-        if all_passed:
-            print("[+] Schema Validation PASSED. Dataset is clean and ready for ML layers.")
-        else:
-            print("[-] Schema Validation FAILED. Unexpected records detected.")
-            
-        return all_passed
+            # Remove missing customers
+            df = df.dropna(subset=["CustomerID"])
+            df["CustomerID"] = (
+                df["CustomerID"]
+                .astype(int)
+                .astype(str)
+            )
 
-if __name__ == "__main__":
-    # Complete automated sequence run
-    raw_data_path = "data/raw_online_retail.xlsx"
-    clean_data_path = "data/cleaned_transactions.csv"
+            # Remove cancelled invoices
+            df["InvoiceNo"] = (
+                df["InvoiceNo"]
+                .astype(str)
+                .str.strip()
+            )
 
-    # Step 1: Stream real source data
-    streamer = RetailStreamHandler()
-    streamer.fetch_live_industry_data()
+            df = df[
+                ~df["InvoiceNo"]
+                .str.startswith("C", na=False)
+            ]
 
-    # Step 2: Clean and validate real source data
-    validator = RetailDataValidator(raw_path=raw_data_path, clean_path=clean_data_path)
-    validator.clean_raw_data()
-    validator.validate_production_schema()
+            # Remove invalid transactions
+            df = df[
+                (df["Quantity"] > 0)
+                & (df["UnitPrice"] > 0)
+            ]
+
+            # Format columns
+            df["StockCode"] = (
+                df["StockCode"]
+                .astype(str)
+                .str.strip()
+            )
+
+            df["InvoiceDate"] = pd.to_datetime(
+                df["InvoiceDate"]
+            )
+
+            df["TotalRevenue"] = (
+                df["Quantity"] * df["UnitPrice"]
+            )
+
+            # Remove duplicates
+            df = df.drop_duplicates()
+
+            os.makedirs(
+                os.path.dirname(self.clean_path),
+                exist_ok=True
+            )
+
+            df.to_csv(
+                self.clean_path,
+                index=False
+            )
+
+            logging.info(
+                f"Cleaned rows: {len(df):,}"
+            )
+
+            logging.info(
+                f"Saved cleaned data: {self.clean_path}"
+            )
+
+            return self.clean_path
+
+        except Exception as e:
+            logging.error(f"Cleaning failed: {e}")
+            raise
+
+    def validate_schema(self) -> bool:
+        try:
+            df = pd.read_csv(self.clean_path)
+
+            checks = [
+                df["CustomerID"].notnull().all(),
+                (df["Quantity"] > 0).all(),
+                (df["UnitPrice"] > 0).all(),
+            ]
+
+            if all(checks):
+                logging.info("Validation PASSED")
+                return True
+
+            logging.error("Validation FAILED")
+            return False
+
+        except Exception as e:
+            logging.error(
+                f"Validation error: {e}"
+            )
+            return False

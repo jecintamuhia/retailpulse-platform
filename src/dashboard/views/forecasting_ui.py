@@ -1,81 +1,136 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import os
+from ui_common import (
+    render_section_header, chart_theme,
+    glass_panel_start, glass_panel_end,
+    render_kpi_card, render_page_heading,
+    CHART_COLORS
+)
+
+DATA_PATH = "data/cleaned/transactions.csv"
+FORECAST_PATH = "data/forecasts/prophet_forecast.csv"
+
+
+@st.cache_data
+def load_data():
+    df = pd.read_csv(DATA_PATH)
+    df['InvoiceDate'] = pd.to_datetime(df['InvoiceDate'])
+    if "TotalRevenue" not in df.columns and "TotalPrice" not in df.columns:
+        df["TotalRevenue"] = df["Quantity"] * df["UnitPrice"]
+    elif "TotalRevenue" not in df.columns:
+        df["TotalRevenue"] = df["TotalPrice"]
+    return df
+
+
+@st.cache_data
+def load_forecast():
+    if os.path.exists(FORECAST_PATH):
+        forecast = pd.read_csv(FORECAST_PATH)
+        forecast['ds'] = pd.to_datetime(forecast['ds'])
+        return forecast
+    return None
+
 
 def render_forecasting_ui():
-    # Page Header Element Layout
-    st.markdown("<h2 style='color:#FFFFFF; font-weight:700; margin-bottom:2px;'>Dashboard Framework</h2>", unsafe_allow_html=True)
-    st.markdown("<p style='color:#9CA3AF; margin-top:0; font-size:0.95rem;'>Plan, prioritize, and accomplish pipeline metrics with ease.</p>", unsafe_allow_html=True)
-    st.markdown("<br>", unsafe_allow_html=True)
-    
-    # 1. NORTH STAR METRICS LAYER (Top Grid)
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.markdown("""
-            <div class='glass-card highlighted'>
-                <div class='card-lbl'>Total Cleaned Rows</div>
-                <div class='card-val'>392.6K</div>
-                <div class='card-delta delta-up'>↗ 5.4% increased vs last ingestion</div>
-            </div>
-        """, unsafe_allow_html=True)
-        
-    with col2:
-        st.markdown("""
-            <div class='glass-card'>
-                <div class='card-lbl'>Active Stock items</div>
-                <div class='card-val'>3,841</div>
-                <div class='card-delta delta-neutral'>→ Stable distribution catalog</div>
-            </div>
-        """, unsafe_allow_html=True)
-        
-    with col3:
-        st.markdown("""
-            <div class='glass-card'>
-                <div class='card-lbl'>Running Forecast Forecasts</div>
-                <div class='card-val'>12</div>
-                <div class='card-delta delta-up'>↗ 2 modules computing live</div>
-            </div>
-        """, unsafe_allow_html=True)
-        
-    with col4:
-        st.markdown("""
-            <div class='glass-card'>
-                <div class='card-lbl'>Data Sanity Status</div>
-                <div class='card-val'>100%</div>
-                <div class='card-delta delta-up' style='color:#10B981;'>✓ Great Expectations Verified</div>
-            </div>
-        """, unsafe_allow_html=True)
+    render_page_heading(
+        "Demand Forecasting & Velocity",
+        subtitle="Historical revenue trends, hourly order velocity, and ML-powered demand predictions.",
+        icon_name="trending_up"
+    )
 
-    st.markdown("<br>", unsafe_allow_html=True)
-    
-    # 2. TRENDS AND MACRO PERFORMANCE LAYER (Middle Container)
     try:
-        df = pd.read_csv("data/cleaned_transactions.csv")
-        df['InvoiceDate'] = pd.to_datetime(df['InvoiceDate'])
-        daily_sales = df.groupby('InvoiceDate')['TotalRevenue'].sum().reset_index()
+        df = load_data()
 
+        # ── KPIs (staggered entrance) ──
+        total_revenue = df['TotalRevenue'].sum()
+        total_days = df['InvoiceDate'].dt.date.nunique()
+        avg_daily = total_revenue / total_days if total_days else 0
+
+        cols = st.columns(3)
+        with cols[0]:
+            render_kpi_card("Total Revenue", f"${total_revenue:,.0f}", icon_name="payments", delay=0.0)
+        with cols[1]:
+            render_kpi_card("Days of Data", f"{total_days}", icon_name="calendar_month", delay=0.05)
+        with cols[2]:
+            render_kpi_card("Avg Daily Revenue", f"${avg_daily:,.0f}", icon_name="bar_chart", delay=0.10)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # ── Historical Revenue ──
+        glass_panel_start()
+        render_section_header("Historical Revenue", icon_name="trending_up")
+        daily = df.groupby(df['InvoiceDate'].dt.date)['TotalRevenue'].sum().reset_index()
+        daily.columns = ['Date', 'Revenue']
         fig = px.line(
-            daily_sales, x='InvoiceDate', y='TotalRevenue', 
-            title="Project Analytics (Daily Processing Inflow Metrics)"
+            daily, x='Date', y='Revenue',
+            color_discrete_sequence=[CHART_COLORS[0]],
+            template="plotly_dark"
         )
-        
-        # Applying Transparent Theme variables directly to the Plotly Engine Matrix
-        fig.update_layout(
-            paper_bgcolor='rgba(0,0,0,0)',
-            plot_bgcolor='rgba(0,0,0,0)',
-            font_color='#E5E7EB',
-            title_font_size=16,
-            xaxis=dict(showgrid=False, color='#9CA3AF'),
-            yaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.05)', color='#9CA3AF'),
-            margin=dict(l=20, r=20, t=50, b=20)
-        )
-        fig.update_traces(line_color='#10B981', line_width=3)
-        
-        # Wrap chart inside a matching glass background container
-        st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
-        st.plotly_chart(fig, use_container_width=True)
-        st.markdown("</div>", unsafe_allow_html=True)
-        
-    except FileNotFoundError:
-        st.error("Data source vector missing. Please check your system validation logic node pathing parameters.")
+        fig.update_traces(line=dict(width=2.5), fill="tozeroy", fillcolor="rgba(16,185,129,0.05)")
+        fig.update_layout(height=350, showlegend=False, **chart_theme())
+        st.plotly_chart(fig, width='stretch')
+        glass_panel_end()
+
+        col_left, col_right = st.columns(2)
+
+        with col_left:
+            # ── Hourly Orders ──
+            glass_panel_start()
+            render_section_header("Hourly Order Velocity", icon_name="schedule")
+            df['Hour'] = df['InvoiceDate'].dt.hour
+            hourly = df.groupby('Hour')['InvoiceNo'].nunique().reset_index()
+            hourly.columns = ['Hour', 'Orders']
+            fig = px.bar(
+                hourly, x='Hour', y='Orders',
+                color_discrete_sequence=[CHART_COLORS[0]],
+                template="plotly_dark"
+            )
+            fig.update_traces(
+                marker=dict(line=dict(width=0)),
+                hovertemplate="Hour %{x}:00<br>%{y} orders<extra></extra>"
+            )
+            fig.update_layout(height=300, showlegend=False, **chart_theme())
+            fig.update_xaxes(tickmode="array", tickvals=list(range(0, 24, 2)))
+            st.plotly_chart(fig, width='stretch')
+            glass_panel_end()
+
+        with col_right:
+            # ── Forecast ──
+            glass_panel_start()
+            render_section_header("7-Day ML Forecast", icon_name="auto_graph")
+            forecast = load_forecast()
+            if forecast is not None:
+                fig = px.line(
+                    forecast, x='ds', y='yhat',
+                    color_discrete_sequence=[CHART_COLORS[0]],
+                    template="plotly_dark"
+                )
+                fig.update_traces(line=dict(width=2.5))
+                if 'yhat_lower' in forecast.columns and 'yhat_upper' in forecast.columns:
+                    fig.add_scatter(
+                        x=forecast['ds'], y=forecast['yhat_upper'],
+                        mode='lines', line=dict(width=0), showlegend=False
+                    )
+                    fig.add_scatter(
+                        x=forecast['ds'], y=forecast['yhat_lower'],
+                        mode='lines', line=dict(width=0),
+                        fill='tonexty', fillcolor='rgba(16,185,129,0.12)',
+                        showlegend=False
+                    )
+                fig.update_layout(
+                    height=300, showlegend=False,
+                    xaxis_title=None, yaxis_title="Predicted Revenue",
+                    **chart_theme()
+                )
+                st.plotly_chart(fig, width='stretch')
+            else:
+                st.info(
+                    "No forecast available. Run the training pipeline to generate a 7-day Prophet forecast.",
+                    icon="ℹ️"
+                )
+            glass_panel_end()
+
+    except Exception as e:
+        st.error(f"Error loading forecasting view: {e}")
